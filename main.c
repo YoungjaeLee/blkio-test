@@ -128,7 +128,7 @@ static void timer_handler(union sigval arg){
 	wbw = wiops * blk_size * 1e-6;
 
 	printf("[%lu]\t%g ops\t%g ops\t%g MB/s\t%g MB/s\t%g ops\t%g ops\t%g MB/s\t%g MB/s\n",
-		(unsigned long)(elapsed_ns * 1e-9), total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw);	
+		(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw);	
 
 	prev_rcnt = cur_rcnt;
 	prev_wcnt = cur_wcnt;

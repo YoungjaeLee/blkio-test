@@ -4,7 +4,7 @@ IMAGE_FILE_DIR=/home/leeyo/disk1
 IMAGE_FILE_SIZE=1 # GB
 LOOP_DEV_PATH=
 
-VG=leeyo
+VG=stack-volumes
 LV=
 LV_SIZE=10g
 
@@ -22,7 +22,7 @@ create_lv(){
 
 	if [ $? = 0 ]
 	then
-		LVM_DEV_PATH=$(readlink -f /dev/mapper/$VG-$LV)
+		LVM_DEV_PATH=$(readlink -f /dev/$VG/$LV)
 		IFS='\/' read -ra VAL <<< "$LVM_DEV_PATH"
 		DEV=$(cat /sys/block/${VAL[2]}/dev)
 		echo "logical volume ($VG/$LV) created."

@@ -1,4 +1,16 @@
-PID=$(ps -ef | grep iogen | grep root | awk '{print $2}')
+#pid=$(ps -ef | grep iogen | grep root | awk '{print $2}')
 
-echo "Terminate the process($PID)"
-kill -15 $PID
+#pid=$(cat .meta/$1.pid)
+
+#echo "Terminate the process($pid)"
+#kill -15 $pid
+
+pidfiles=$(ls .meta/*.pid)
+
+for pidfile in $pidfiles
+do
+	pid=$(cat $pidfile)
+	echo "Terminate the process($pid)"
+	kill -15 $pid
+done
+
