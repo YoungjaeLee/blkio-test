@@ -92,7 +92,7 @@ delete_cgroup(){
 	cgm remove blkio $CGROUP_PREFIX$IDX
 }
 
-while getopts ":i:b:r:sl" opt; do
+while getopts ":i:b:r:s:l" opt; do
 	case $opt in
 		i)
 			IDX=$OPTARG
@@ -109,10 +109,15 @@ while getopts ":i:b:r:sl" opt; do
 		l)
 			LVM=1
 			;;
+
 		:)
-			echo "Option -$OPTARG requires an argument."
+			echo "Option -$OPTARG requires an argument." >&2
 			exit 1
-		;;
+			;;
+		\?)
+			echo "Invalid option: -$OPTARG." >&2
+			exit 1
+			;;
 	esac
 done
 
