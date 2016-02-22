@@ -2,7 +2,7 @@
 
 NUM=1
 
-while getopts ":n:t" opt; do
+while getopts ":n:" opt; do
 	case $opt in
 		n)
 			NUM=$OPTARG
@@ -16,5 +16,5 @@ done
 
 for i in `seq 1 $NUM`
 do
-	./__run.sh -l -i $i -b 128 -s 0 &
+	./__run.sh -l -i $i -b 128 -s 1 &
 done

@@ -3,9 +3,12 @@ CFLAGS=-Wall -g
 LDFLAGS=-lrt
 #LD_LIBRARY_PATH=/usr/lib/powerpc64le-linux-gnu/
 
-all: iogen
+all: iogen test
 
-iogen: main.o
+test: test.o 
+	$(CC) -o $@ $^
+
+iogen: main.o util.o
 	$(CC) -o $@ $^ $(LDFLAGS)
     
 %.o: %.c
@@ -13,4 +16,4 @@ iogen: main.o
 
 clean:
 	rm -rf *.o
-	rm -rf iogen
+	rm -rf iogen test

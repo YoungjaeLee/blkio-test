@@ -6,7 +6,7 @@ LOOP_DEV_PATH=
 
 VG=stack-volumes
 LV=
-LV_SIZE=10g
+LV_SIZE=512g
 
 DEV=
 CGROUP_PREFIX=blkio_test_
