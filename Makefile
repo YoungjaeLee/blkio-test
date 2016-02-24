@@ -1,12 +1,12 @@
 CC=gcc
 CFLAGS=-Wall -g
-LDFLAGS=-lrt
+LDFLAGS=-lrt -lpthread
 #LD_LIBRARY_PATH=/usr/lib/powerpc64le-linux-gnu/
 
 all: iogen test
 
-test: test.o 
-	$(CC) -o $@ $^
+test: util.o test.o
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 iogen: main.o util.o
 	$(CC) -o $@ $^ $(LDFLAGS)

@@ -20,15 +20,27 @@
 
 off_t device_size = 0;
 int blk_size = 4096;
-int n_blk;
 int r_ratio = 100;
 int sequential = 1;
 char *fname = NULL;
 int running = 1;
 uint64_t start_ticks, cur_ticks, prev_ticks;
 double ns_per_tick;
-uint64_t rcnt = 0, wcnt = 0, prev_rcnt = 0, prev_wcnt = 0;
 struct timespec start_tp;
+
+int n_thread = 0;
+
+struct thread_args {
+	int id;
+	uint64_t rcnt, prev_rcnt;
+	uint64_t wcnt, prev_wcnt;;
+	char *device;
+	int blk_size;
+	int blk_cnt;
+	int r_ratio;
+};
+
+struct thread_args *args;
 
 static void sig_handler(int sig){
 	if(sig == SIGINT || sig == SIGTERM){
@@ -42,41 +54,57 @@ static void timer_handler(union sigval arg){
 	double total_rbw, total_riops, rbw, riops;
 	double total_wbw, total_wiops, wbw, wiops;
 	uint64_t cur_rcnt, cur_wcnt;
+	int i;
 
 	prev_ticks = cur_ticks;
 	cur_ticks = getticks();
-	cur_rcnt = rcnt;
-	cur_wcnt = wcnt;
 
 	elapsed_ticks = cur_ticks - start_ticks;
 	elapsed_ns = elapsed_ticks * ns_per_tick;
 	diff_ticks = cur_ticks - prev_ticks;
 	diff_ns = diff_ticks * ns_per_tick;
 
-	total_riops = (double)(cur_rcnt) / ((double)elapsed_ns * 1e-9);
-	total_rbw = total_riops * blk_size * 1e-6;
-	total_wiops = (double)(cur_wcnt) / ((double)elapsed_ns * 1e-9);
-	total_wbw = total_wiops * blk_size * 1e-6;
+	total_riops = total_wiops = 0;
+	total_rbw = total_wbw = 0;
+	riops = wiops = 0;
+	rbw = wbw = 0;
 
-	riops = (double)(cur_rcnt - prev_rcnt) / ((double)diff_ns * 1e-9);
-	rbw = riops * blk_size * 1e-6;
-	wiops = (double)(cur_wcnt - prev_wcnt) / ((double)diff_ns * 1e-9);
-	wbw = wiops * blk_size * 1e-6;
+	for(i = 0; i < n_thread; i++){
+		cur_rcnt = args[i].rcnt;
+		cur_wcnt = args[i].wcnt;
+
+		total_riops += (double)(cur_rcnt) / ((double)elapsed_ns * 1e-9);
+		total_rbw += total_riops * args[i].blk_size * 1e-6;
+		total_wiops += (double)(cur_wcnt) / ((double)elapsed_ns * 1e-9);
+		total_wbw += total_wiops * args[i].blk_size * 1e-6;
+
+		riops += (double)(cur_rcnt - args[i].prev_rcnt) / ((double)diff_ns * 1e-9);
+		rbw += riops * args[i].blk_size * 1e-6;
+		wiops += (double)(cur_wcnt - args[i].prev_wcnt) / ((double)diff_ns * 1e-9);
+		wbw += wiops * args[i].blk_size * 1e-6;
+
+		args[i].prev_rcnt = cur_rcnt;
+		args[i].prev_wcnt = cur_wcnt;
+	}
 
 	printf("[%lu]\t%g ops\t%g ops\t%g MB/s\t%g MB/s\t%g ops\t%g ops\t%g MB/s\t%g MB/s\n",
 		(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw);	
 
-	prev_rcnt = cur_rcnt;
-	prev_wcnt = cur_wcnt;
 
 }
 
-void run(void){
-	int fd, ret;
-	struct stat stat_buf;
+void *run(void *__arg){
+	int fd, ret, blk_cnt, blk_size, r_ratio;
 	char *buf = NULL;
+	struct thread_args *arg = (struct thread_args*)__arg;
 
-	fd = open(fname, O_DIRECT | O_RDWR | O_LARGEFILE);
+	blk_cnt = arg->blk_cnt;
+	blk_size = arg->blk_size;
+	r_ratio = arg->r_ratio;
+	arg->rcnt = arg->wcnt = 0;
+	arg->prev_rcnt = arg->prev_wcnt = 0;
+
+	fd = open(arg->device, O_DIRECT | O_RDWR | O_LARGEFILE);
 	if(fd < 0){
 		perror("open failed.");
 		goto err;
@@ -87,19 +115,8 @@ void run(void){
 		goto err1;
 	}
 
-	if(device_size == 0){
-		if(fstat(fd, &stat_buf)){
-			perror("fstat failed.");
-			goto err2;
-		}
-		device_size = stat_buf.st_size;
-	}
-	n_blk = device_size / blk_size;
-	rcnt = wcnt = 0;
+	printf("tid[%d] device: %s device_size: %ld blk_size: %d blk_cnt: %d\n", arg->id, arg->device, device_size, blk_size, blk_cnt);
 
-	printf("fname: %s device_size: %ld blk_size: %d n_blk: %d\n", fname, device_size, blk_size, n_blk);
-
-	start_ticks = cur_ticks = getticks();
 	if(clock_gettime(CLOCK_REALTIME, &start_tp)){
 		fprintf(stderr, "clock_gettime failed.\n");
 		goto err2;
@@ -113,7 +130,7 @@ void run(void){
 					goto err2;
 				}
 		} else{
-			if(lseek(fd, (lrand48() % n_blk) * blk_size, SEEK_SET) < 0){
+			if(lseek(fd, (lrand48() % blk_cnt) * blk_size, SEEK_SET) < 0){
 				perror("lseek failed\n");
 				goto err2;
 			}
@@ -126,7 +143,7 @@ void run(void){
 				fprintf(stderr, "fd: %d ret: %d\n", fd, ret);
 				goto err2;
 			}
-			rcnt++;
+			arg->rcnt++;
 		} else {
 			ret = write(fd, buf, blk_size);
 			if(blk_size != ret){
@@ -134,7 +151,7 @@ void run(void){
 				fprintf(stderr, "ret: %d\n", ret);
 				goto err2;
 			}
-			wcnt++;
+			arg->wcnt++;
 		}
 	}
 
@@ -143,16 +160,17 @@ err2:
 err1:
 	close(fd);
 err:
-	return;
+	pthread_exit(0);
 }
 
 int main(int argc, char *argv[]){
-	int opt;
+	int opt, i;
 	struct sigevent sev;
 	timer_t timerid;
 	struct itimerspec its;
+	pthread_t *tid;
 
-	while((opt = getopt(argc, argv, "b:r:s:d:B:")) != -1){
+	while((opt = getopt(argc, argv, "b:r:s:d:B:t:")) != -1){
 		switch(opt){
 			case 'b':
 				blk_size = atoi(optarg) * 1024;
@@ -169,11 +187,14 @@ int main(int argc, char *argv[]){
 			case 'B':
 				device_size = atol(optarg);
 				break;
+			case 't':
+				n_thread = atoi(optarg);
+				break;
 		}
 	}
 
-	if(fname == NULL || r_ratio < 0 || r_ratio > 100){
-		fprintf(stderr, "usage: %s [-B devicesize(bytes)] [-b blocksize(K)] [-r read ratio] [-s 0:random/1:seq] [-d device file]\n", argv[0]);
+	if(fname == NULL || r_ratio < 0 || r_ratio > 100 || n_thread == 0){
+		fprintf(stderr, "usage: %s [-B devicesize(bytes)] [-b blocksize(K)] [-r read ratio] [-s 0:random/1:seq] [-d device file] [-t n_thread]\n", argv[0]);
 		return -1;
 	}
 
@@ -208,8 +229,28 @@ int main(int argc, char *argv[]){
 		goto err;
 	}
 
+	tid = (pthread_t *)malloc(sizeof(pthread_t) * n_thread);
+	args = (struct thread_args *)malloc(sizeof(struct thread_args) * n_thread);
+	for(i = 0; i < n_thread; i++){
+		args->id = i;
+		args->device = fname;
+		args->blk_size = blk_size;
+		args->blk_cnt = device_size / blk_size;
+	}
+
 	ns_per_tick = time_per_tick(1000, 100);
-	run();
+	start_ticks = cur_ticks = getticks();
+	
+	for(i = 0; i< n_thread; i++){
+		if(pthread_create(&tid[i], NULL, run, &args[i])){
+			perror("pthread_create failed.");
+			goto err;
+		}
+	}
+
+	for(i = 0; i< n_thread; i++){
+		pthread_join(tid[i], NULL);
+	}
 
 err:
 	free(fname);

@@ -92,8 +92,11 @@ delete_cgroup(){
 	cgm remove blkio $CGROUP_PREFIX$IDX
 }
 
-while getopts ":i:b:r:s:l" opt; do
+while getopts ":i:b:r:s:lt:" opt; do
 	case $opt in
+		t)
+			THREAD=$OPTARG
+			;;
 		i)
 			IDX=$OPTARG
 			;;
@@ -140,9 +143,10 @@ fi
 
 DEVSIZE=$(($__DEVSIZE * 512))
 
-./iogen -B $DEVSIZE -b $BLKSIZE -r $RRATIO -s $SEQ -d $DEV_PATH > $IDX.out &
+set -x
+./iogen -B $DEVSIZE -b $BLKSIZE -r $RRATIO -s $SEQ -d $DEV_PATH -t $THREAD > $IDX.out &
 PID=$!
-echo "iogen executed($PID) (-B $DEVSIZE -b $BLKSIZE -r $RRATIO -s $SEQ -d $DEV_PATH > $IDX.out)"
+set +x
 create_cgroup_add_pid $PID
 
 echo $PID > $META_DIR/$IDX.pid
