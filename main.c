@@ -19,7 +19,6 @@
 #include "util.h"
 
 off_t device_size = 0;
-int blk_size = 4096;
 int r_ratio = 100;
 int sequential = 1;
 char *fname = NULL;
@@ -38,9 +37,9 @@ struct thread_args {
 	int blk_size;
 	int blk_cnt;
 	int r_ratio;
+	int iodepth;
 };
 
-struct thread_args *args;
 
 static void sig_handler(int sig){
 	if(sig == SIGINT || sig == SIGTERM){
@@ -53,8 +52,10 @@ static void timer_handler(union sigval arg){
 	uint64_t elapsed_ticks, diff_ticks, elapsed_ns, diff_ns;
 	double total_rbw, total_riops, rbw, riops;
 	double total_wbw, total_wiops, wbw, wiops;
+	double temp_iops;
 	uint64_t cur_rcnt, cur_wcnt;
 	int i;
+	struct thread_args *args = arg.sival_ptr;
 
 	prev_ticks = cur_ticks;
 	cur_ticks = getticks();
@@ -73,25 +74,174 @@ static void timer_handler(union sigval arg){
 		cur_rcnt = args[i].rcnt;
 		cur_wcnt = args[i].wcnt;
 
-		total_riops += (double)(cur_rcnt) / ((double)elapsed_ns * 1e-9);
-		total_rbw += total_riops * args[i].blk_size * 1e-6;
-		total_wiops += (double)(cur_wcnt) / ((double)elapsed_ns * 1e-9);
-		total_wbw += total_wiops * args[i].blk_size * 1e-6;
+		temp_iops = (double)(cur_rcnt) / ((double)elapsed_ns * 1e-9);
+		total_riops += temp_iops;
+		total_rbw += (temp_iops * (double)(args[i].blk_size) * 1e-6);
 
-		riops += (double)(cur_rcnt - args[i].prev_rcnt) / ((double)diff_ns * 1e-9);
-		rbw += riops * args[i].blk_size * 1e-6;
-		wiops += (double)(cur_wcnt - args[i].prev_wcnt) / ((double)diff_ns * 1e-9);
-		wbw += wiops * args[i].blk_size * 1e-6;
+		temp_iops = (double)(cur_wcnt) / ((double)elapsed_ns * 1e-9);
+		total_wiops += temp_iops;
+		total_wbw += (temp_iops * (double)(args[i].blk_size) * 1e-6);
+
+		temp_iops = (double)(cur_rcnt - args[i].prev_rcnt) / ((double)diff_ns * 1e-9);
+		riops += temp_iops;
+		rbw += (temp_iops * (double)(args[i].blk_size) * 1e-6);
+
+		temp_iops = (double)(cur_wcnt - args[i].prev_wcnt) / ((double)diff_ns * 1e-9);
+		wiops += temp_iops;
+		wbw += (temp_iops * (double)(args[i].blk_size) * 1e-6);
 
 		args[i].prev_rcnt = cur_rcnt;
 		args[i].prev_wcnt = cur_wcnt;
 	}
 
-	printf("[%lu]\t%g ops\t%g ops\t%g MB/s\t%g MB/s\t%g ops\t%g ops\t%g MB/s\t%g MB/s\n",
-		(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw);	
+	printf("[%lu]\t %d bytes %g ops\t%g ops\t%g MB/s\t%g MB/s\t%g ops\t%g ops\t%g MB/s\t%g MB/s\n",
+		(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, args[0].blk_size, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw);	
 
 
 }
+
+int io_setup(unsigned nr, aio_context_t *ctxp){
+	return syscall(__NR_io_setup, nr, ctxp);
+}
+
+int io_destroy(aio_context_t ctx){
+	return syscall(__NR_io_destroy, ctx);
+}
+
+int io_submit(aio_context_t ctx, long nr, struct iocb **iocbpp){
+	return syscall(__NR_io_submit, ctx, nr, iocbpp);
+}
+
+int io_getevents(aio_context_t ctx, long min_nr, long max_nr, 
+				struct io_event *events, struct timespec *timeout){
+	return syscall(__NR_io_getevents, ctx, min_nr, max_nr, events, timeout);
+}
+
+#define MAX_IO_DEPTH (512)
+
+void *run_aio(void *__arg){
+	int fd, ret, blk_cnt, blk_size, r_ratio, iodepth, i;
+	struct thread_args *arg = (struct thread_args*)__arg;
+
+	aio_context_t ctx;
+	int complete[MAX_IO_DEPTH];
+	int r[MAX_IO_DEPTH];
+	struct iocb cb[MAX_IO_DEPTH];
+	struct iocb *cbs[MAX_IO_DEPTH];
+	char *buf[MAX_IO_DEPTH];
+	struct io_event events[MAX_IO_DEPTH];
+	int op_inflight;
+	int op_issued;
+
+	blk_cnt = arg->blk_cnt;
+	blk_size = arg->blk_size;
+	r_ratio = arg->r_ratio;
+	arg->rcnt = arg->wcnt = 0;
+	arg->prev_rcnt = arg->prev_wcnt = 0;
+	iodepth = arg->iodepth;
+
+	fd = open(arg->device, O_DIRECT | O_RDWR | O_LARGEFILE);
+	if(fd < 0){
+		perror("open failed.");
+		goto err;
+	}
+
+	ret = io_setup(iodepth, &ctx);
+	if(ret < 0){
+		perror("io_setup error");
+		pthread_exit(NULL);
+	}
+
+	for(i = 0; i < MAX_IO_DEPTH; i++){
+		complete[i] = 1;
+		memset(&cb[i], 0, sizeof(struct iocb));
+		if(posix_memalign((void**)&buf[i], 65536, blk_size)){
+			fprintf(stderr, "buf allocation failed.\n");
+			goto err1;
+		}
+		cb[i].aio_data = i;
+		cb[i].aio_fildes = fd;
+		cb[i].aio_buf = (uint64_t)buf[i];
+		cb[i].aio_nbytes = blk_size;
+	}
+
+	printf("tid[%d] device: %s device_size: %ld blk_size: %d blk_cnt: %d r_ratio: %d\n", arg->id, arg->device, device_size, arg->blk_size, arg->blk_cnt, arg->r_ratio);
+
+
+	while(running){
+		op_issued = 0;
+		for(i = 0; (i < MAX_IO_DEPTH) && running; i++){
+			if(complete[i] == 0) continue;
+
+			complete[i] = 0;
+			memset(&cb[i], 0, sizeof(struct iocb));
+			cb[i].aio_data = i;
+			cb[i].aio_fildes = fd;
+			if(lrand48() % 100 < r_ratio){
+				cb[i].aio_lio_opcode = IOCB_CMD_PREAD;
+				r[i] = 1;
+			} else {
+				cb[i].aio_lio_opcode = IOCB_CMD_PWRITE;
+				r[i] = 0;
+			}
+
+			cb[i].aio_buf = (uint64_t)buf[i];
+			cb[i].aio_offset = (lrand48() % blk_cnt) * blk_size;
+			cb[i].aio_nbytes = blk_size;
+
+			cbs[op_issued] = &cb[i];
+			op_issued++;
+
+			if(op_inflight + op_issued == iodepth) break;
+		}
+		ret = io_submit(ctx, op_issued, cbs);
+		if(ret != op_issued){
+			if(ret < 0)
+				perror("io_submit error");
+			else
+				fprintf(stderr, "couldn't submit IOs");
+			pthread_exit(NULL);
+		}
+
+		op_inflight += op_issued;
+
+		ret = io_getevents(ctx, 1, iodepth, events, NULL);
+		if(ret < 1){
+			fprintf(stderr, "io_getevents error %d\n", ret);
+			pthread_exit(NULL);
+		}
+		op_inflight -= ret;
+
+		for(i = 0; i < ret; i++){
+			if(events[i].res != blk_size){
+				printf("io error: %ld %ld\n", events[i].res, events[i].res2);
+				pthread_exit(NULL);
+			}
+			complete[events[i].data] = 1;
+			if(r[events[i].data]){
+				arg->rcnt++;
+			} else {
+				arg->wcnt++;
+			}
+		}
+	}
+
+	ret = io_destroy(ctx);
+	if(ret < 0){
+		perror("io_destroy error");
+		pthread_exit(NULL);
+	}
+
+	for(i = 0; i< MAX_IO_DEPTH; i++)
+		free(buf[i]);
+
+err1:
+	close(fd);
+err:
+	pthread_exit(0);
+}
+
+
 
 void *run(void *__arg){
 	int fd, ret, blk_cnt, blk_size, r_ratio;
@@ -115,12 +265,7 @@ void *run(void *__arg){
 		goto err1;
 	}
 
-	printf("tid[%d] device: %s device_size: %ld blk_size: %d blk_cnt: %d\n", arg->id, arg->device, device_size, blk_size, blk_cnt);
-
-	if(clock_gettime(CLOCK_REALTIME, &start_tp)){
-		fprintf(stderr, "clock_gettime failed.\n");
-		goto err2;
-	}
+	printf("tid[%d] device: %s device_size: %ld blk_size: %d blk_cnt: %d r_ratio: %d\n", arg->id, arg->device, device_size, arg->blk_size, arg->blk_cnt, arg->r_ratio);
 
 	while(running){
 		if(sequential){
@@ -164,14 +309,19 @@ err:
 }
 
 int main(int argc, char *argv[]){
-	int opt, i;
+	int opt, i, aio = 0;
 	struct sigevent sev;
 	timer_t timerid;
 	struct itimerspec its;
 	pthread_t *tid;
+	int blk_size = 0;
+	struct thread_args *args;
 
-	while((opt = getopt(argc, argv, "b:r:s:d:B:t:")) != -1){
+	while((opt = getopt(argc, argv, "b:r:s:d:B:t:a:")) != -1){
 		switch(opt){
+			case 'a':
+				aio = atoi(optarg);
+				break;
 			case 'b':
 				blk_size = atoi(optarg) * 1024;
 				break;
@@ -208,10 +358,13 @@ int main(int argc, char *argv[]){
 		goto err;
 	}
 
+	tid = (pthread_t *)malloc(sizeof(pthread_t) * n_thread);
+	args = (struct thread_args *)malloc(sizeof(struct thread_args) * n_thread);
+
 	sev.sigev_notify = SIGEV_THREAD;
 	sev.sigev_notify_function = timer_handler;
 	sev.sigev_notify_attributes = NULL;
-	sev.sigev_value.sival_ptr = NULL;
+	sev.sigev_value.sival_ptr = args;
 	if(timer_create(CLOCK_REALTIME, &sev, &timerid) == -1){
 		fprintf(stderr, "failed to create a timer\n");
 		goto err;
@@ -229,22 +382,34 @@ int main(int argc, char *argv[]){
 		goto err;
 	}
 
-	tid = (pthread_t *)malloc(sizeof(pthread_t) * n_thread);
-	args = (struct thread_args *)malloc(sizeof(struct thread_args) * n_thread);
 	for(i = 0; i < n_thread; i++){
-		args->id = i;
-		args->device = fname;
-		args->blk_size = blk_size;
-		args->blk_cnt = device_size / blk_size;
+		args[i].id = i;
+		args[i].device = fname;
+		args[i].blk_size = blk_size;
+		args[i].blk_cnt = device_size / blk_size;
+		args[i].r_ratio = r_ratio;
+		args[i].iodepth = aio;
 	}
 
 	ns_per_tick = time_per_tick(1000, 100);
 	start_ticks = cur_ticks = getticks();
 	
+	if(clock_gettime(CLOCK_REALTIME, &start_tp)){
+		fprintf(stderr, "clock_gettime failed.\n");
+		goto err;
+	}
+
 	for(i = 0; i< n_thread; i++){
-		if(pthread_create(&tid[i], NULL, run, &args[i])){
-			perror("pthread_create failed.");
-			goto err;
+		if(aio > 0){
+			if(pthread_create(&tid[i], NULL, run_aio, &args[i])){
+				perror("pthread_create failed.");
+				goto err;
+			}
+		} else {
+			if(pthread_create(&tid[i], NULL, run, &args[i])){
+				perror("pthread_create failed.");
+				goto err;
+			}
 		}
 	}
 
