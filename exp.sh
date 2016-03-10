@@ -1,9 +1,13 @@
 #!/bin/bash
 
 NUM=1
+S=1
 
-while getops ":n:" opt; do
+while getopts ":s:n:" opt; do
 	case $opt in
+		s)
+			S=$OPTARG
+			;;
 		n)
 			NUM=$OPTARG
 			;;
@@ -15,7 +19,7 @@ while getops ":n:" opt; do
 done
 
 set -x
-for i in `seq 1 $NUM`
+for i in `seq $S $NUM`
 do
 	./run.sh -n $i
 	sleep 300

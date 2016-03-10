@@ -10,6 +10,7 @@ LV_SIZE=128g
 
 DEV=
 CGROUP_PREFIX=blkio_test_
+CGROUP_NAME=
 IDX=1
 BLKSIZE=4 # KB
 RRATIO=100 # percentage
@@ -83,20 +84,32 @@ delete_loop_dev(){
 }
 
 create_cgroup_add_pid(){
-	cgm create blkio $CGROUP_PREFIX$IDX
-	echo "$CGROUP_PREFIX$IDX for blkio created."
-	cgm movepid blkio $CGROUP_PREFIX$IDX $1
-	echo "pid[$1] moved to $CGROUP_PREFIX$IDX"
+	cgm create blkio $CGROUP_NAME
+	echo "$CGROUP_NAME for blkio created."
+	cgm movepid blkio $CGROUP_NAME $1
+	echo "pid[$1] moved to $CGROUP_NAME"
 }
 
 delete_cgroup(){
-	cgm remove blkio $CGROUP_PREFIX$IDX
+	cgm remove blkio $CGROUP_NAME
 }
 
 OUTPUT_DIR=results/default
+CGROUP_IDX=-1
+MAX_IOPS=0
+MAX_BW=0
 
-while getopts ":i:b:r:s:lt:L:o:a:" opt; do
+while getopts ":i:b:r:s:lt:L:o:a:c:I:B:" opt; do
 	case $opt in
+		I)
+			MAX_IOPS=$OPTARG
+			;;
+		B)
+			MAX_BW=$OPTARG
+			;;
+		c)
+			CGROUP_IDX=$OPTARG
+			;;
 		a)
 			AIO="-a $OPTARG"
 			;;
@@ -135,6 +148,13 @@ while getopts ":i:b:r:s:lt:L:o:a:" opt; do
 	esac
 done
 
+if [ $CGROUP_IDX = -1 ]
+then
+	CGROUP_NAME=$CGROUP_PREFIX$IDX
+else
+	CGROUP_NAME=$CGROUP_PREFIX$CGROUP_IDX
+fi
+
 if [ ! -e $META_DIR ]
 then
 	mkdir $META_DIR
@@ -162,7 +182,17 @@ create_cgroup_add_pid $PID
 
 echo $PID > $META_DIR/$IDX.pid
 echo $DEV > $META_DIR/$IDX.dev
-echo $CGROUP_PREFIX$IDX > $META_DIR/$IDX.cgroup
+echo $CGROUP_NAME > $META_DIR/$IDX.cgroup
+
+if [ $MAX_BW != 0 ]
+then
+	cgm setvalue blkio $CGROUP_NAME blkio.throttle.read_bps_device "$DEV $MAX_BW"
+fi
+
+if [ $MAX_IOPS != 0 ]
+then
+	cgm setvalue blkio $CGROUP_NAME blkio.throttle.read_iops_device "$DEV $MAX_IOPS"
+fi
 
 echo "waiting for $PID"
 wait $PID
