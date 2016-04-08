@@ -5,7 +5,15 @@
 #echo "Terminate the process($pid)"
 #kill -15 $pid
 
-pidfiles=$(ls .meta/*.pid)
+while getopts "p:" opt; do
+	case $opt in
+		p)
+			PREFIX=$OPTARG
+			;;
+	esac
+done
+
+pidfiles=$(ls .meta/$PREFIX*.pid)
 
 for pidfile in $pidfiles
 do

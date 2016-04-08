@@ -186,12 +186,14 @@ echo $CGROUP_NAME > $META_DIR/$IDX.cgroup
 
 if [ $MAX_BW != 0 ]
 then
-	cgm setvalue blkio $CGROUP_NAME blkio.throttle.read_bps_device "$DEV $MAX_BW"
+	#cgm setvalue blkio $CGROUP_NAME blkio.throttle.read_bps_device "$DEV $MAX_BW"
+	cgm setvalue blkio $CGROUP_NAME blkio.throttle.write_bps_device "$DEV $MAX_BW"
 fi
 
 if [ $MAX_IOPS != 0 ]
 then
-	cgm setvalue blkio $CGROUP_NAME blkio.throttle.read_iops_device "$DEV $MAX_IOPS"
+	#cgm setvalue blkio $CGROUP_NAME blkio.throttle.read_iops_device "$DEV $MAX_IOPS"
+	cgm setvalue blkio $CGROUP_NAME blkio.throttle.write_iops_device "$DEV $MAX_IOPS"
 fi
 
 echo "waiting for $PID"
