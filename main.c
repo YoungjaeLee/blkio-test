@@ -46,6 +46,16 @@ static void sig_handler(int sig){
 		running = 0;
 		printf("SIGINT\n");
 	}
+
+	if(sig == SIGUSR1){
+		if(running < n_thread) running++;
+		fprintf(stderr, "SIGUSR1: increasing # of running threads to %d.\n", running);
+	}
+
+	if(sig == SIGUSR2){
+		if(running > 1) running--;
+		fprintf(stderr, "SIGUSR2: decreasing # of running threads to %d.\n", running);
+	}
 }
 
 static void timer_handler(union sigval arg){
@@ -120,7 +130,7 @@ int io_getevents(aio_context_t ctx, long min_nr, long max_nr,
 #define MAX_IO_DEPTH (512)
 
 void *run_aio(void *__arg){
-	int fd, ret, blk_cnt, blk_size, r_ratio, iodepth, i;
+	int fd, ret, blk_cnt, blk_size, r_ratio, iodepth, i, tid;
 	struct thread_args *arg = (struct thread_args*)__arg;
 
 	aio_context_t ctx;
@@ -139,6 +149,7 @@ void *run_aio(void *__arg){
 	arg->rcnt = arg->wcnt = 0;
 	arg->prev_rcnt = arg->prev_wcnt = 0;
 	iodepth = arg->iodepth;
+	tid = arg->id;
 
 	fd = open(arg->device, O_DIRECT | O_RDWR | O_LARGEFILE);
 	if(fd < 0){
@@ -169,6 +180,7 @@ void *run_aio(void *__arg){
 
 
 	while(running){
+		if(running < (tid + 1)) continue;
 		op_issued = 0;
 		for(i = 0; (i < MAX_IO_DEPTH) && running; i++){
 			if(complete[i] == 0) continue;
@@ -244,7 +256,7 @@ err:
 
 
 void *run(void *__arg){
-	int fd, ret, blk_cnt, blk_size, r_ratio;
+	int fd, ret, blk_cnt, blk_size, r_ratio, tid;
 	char *buf = NULL;
 	struct thread_args *arg = (struct thread_args*)__arg;
 
@@ -253,6 +265,7 @@ void *run(void *__arg){
 	r_ratio = arg->r_ratio;
 	arg->rcnt = arg->wcnt = 0;
 	arg->prev_rcnt = arg->prev_wcnt = 0;
+	tid = arg->id;
 
 	fd = open(arg->device, O_DIRECT | O_RDWR | O_LARGEFILE);
 	if(fd < 0){
@@ -268,6 +281,7 @@ void *run(void *__arg){
 	printf("tid[%d] device: %s device_size: %ld blk_size: %d blk_cnt: %d r_ratio: %d\n", arg->id, arg->device, device_size, arg->blk_size, arg->blk_cnt, arg->r_ratio);
 
 	while(running){
+		if(running < (tid + 1)) continue;
 		if(sequential){
 			if(lseek(fd, 0, SEEK_CUR) + blk_size > device_size)
 				if(lseek(fd, 0, SEEK_SET)){
@@ -357,6 +371,14 @@ int main(int argc, char *argv[]){
 		perror("failed to establish SIGINT handler");
 		goto err;
 	}
+	if(signal(SIGUSR1, sig_handler) == SIG_ERR){
+		perror("failed to establish SIGUSR1 handler");
+		goto err;
+	}
+	if(signal(SIGUSR2, sig_handler) == SIG_ERR){
+		perror("failed to establish SIGUSR2 handler");
+		goto err;
+	}
 
 	tid = (pthread_t *)malloc(sizeof(pthread_t) * n_thread);
 	args = (struct thread_args *)malloc(sizeof(struct thread_args) * n_thread);
@@ -398,6 +420,8 @@ int main(int argc, char *argv[]){
 		fprintf(stderr, "clock_gettime failed.\n");
 		goto err;
 	}
+
+	running = n_thread;
 
 	for(i = 0; i< n_thread; i++){
 		if(aio > 0){

@@ -71,8 +71,8 @@ cgroup_set_values(){
 	if [ $CGROUP_VER = 2 ]
 	then
 		set -x
-		echo "$LVDEV rbps=$MAX_BW riops=$MAX_IOPS" > $CGROUPV2_DIR/$CGROUP_NAME/io.max
-		#echo "$PVDEV rbps=$MAX_BW riops=$MAX_IOPS" > $CGROUPV2_DIR/$CGROUP_NAME/io.max
+		#echo "$LVDEV bps=$MAX_BW iops=$MAX_IOPS" > $CGROUPV2_DIR/$CGROUP_NAME/io.max
+		echo "$PVDEV rbps=$MAX_BW riops=$MAX_IOPS" > $CGROUPV2_DIR/$CGROUP_NAME/io.max
 		echo "$PVDEV $WEIGHT" > $CGROUPV2_DIR/$CGROUP_NAME/io.weight
 		set +x 
 	else
@@ -172,7 +172,7 @@ then
 	WEIGHT=$MAX_WEIGHT
 	if [ $CGROUP_VER = 2 ]
 	then
-		CGROUP_NAME="Shared/$CGROUP_NAME"
+		CGROUP_NAME="$CGROUP_NAME"
 	fi
 elif [ $CLASS = "B" ]
 then
