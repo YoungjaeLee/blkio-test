@@ -22,6 +22,16 @@ off_t device_size = 0;
 int r_ratio = 100;
 int sequential = 1;
 char *fname = NULL;
+char *lfname = NULL;
+int *rlat_dist;
+#define RLAT_DIST_SIZE (10000)
+#define ADD_TO_DIST(rlat)	\
+	do {	\
+		if(rlat / 10 < RLAT_DIST_SIZE){	\
+			rlat_dist[(uint64_t)rlat / 10]++;	\
+		}	\
+	} while(0)
+FILE *lfp = NULL;
 int running = 1;
 uint64_t start_ticks, cur_ticks, prev_ticks;
 double ns_per_tick;
@@ -33,6 +43,8 @@ struct thread_args {
 	int id;
 	uint64_t rcnt, prev_rcnt;
 	uint64_t wcnt, prev_wcnt;;
+	uint64_t rlat_usec;
+	double rlat_max_usec, rlat_min_usec, avg_rlat_usec;
 	char *device;
 	int blk_size;
 	int blk_cnt;
@@ -48,13 +60,15 @@ static void sig_handler(int sig){
 	}
 
 	if(sig == SIGUSR1){
-		if(running < n_thread) running++;
-		fprintf(stderr, "SIGUSR1: increasing # of running threads to %d.\n", running);
+		if(running <= n_thread) running++;
+		//running = n_thread + 1;
+		fprintf(stderr, "SIGUSR1: increasing # of running threads to %d.\n", running - 1);
 	}
 
 	if(sig == SIGUSR2){
 		if(running > 1) running--;
-		fprintf(stderr, "SIGUSR2: decreasing # of running threads to %d.\n", running);
+		//running = 1;
+		fprintf(stderr, "SIGUSR2: decreasing # of running threads to %d.\n", running - 1);
 	}
 }
 
@@ -100,12 +114,21 @@ static void timer_handler(union sigval arg){
 		wiops += temp_iops;
 		wbw += (temp_iops * (double)(args[i].blk_size) * 1e-6);
 
+		args[i].avg_rlat_usec = args[i].rlat_usec / (cur_rcnt - args[i].prev_rcnt);
+		args[i].rlat_usec = 0;
+
 		args[i].prev_rcnt = cur_rcnt;
 		args[i].prev_wcnt = cur_wcnt;
 	}
 
-	printf("[%lu]\t %d bytes %g ops\t%g ops\t%g MB/s\t%g MB/s\t%g ops\t%g ops\t%g MB/s\t%g MB/s\n",
-		(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, args[0].blk_size, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw);	
+	//printf("[%lu]\t %d bytes %g ops\t%g ops\t%g MB/s\t%g MB/s\t%g ops\t%g ops\t%g MB/s\t%g MB/s\t%g usec\t%g usec\t%g usec\n",
+		//(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, args[0].blk_size, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw, rlat, args[0].rlat_min_usec, args[0].rlat_max_usec);
+	printf("[%lu]\t %d bytes %g ops\t%g ops\t%g MB/s\t%g MB/s\t%g ops\t%g ops\t%g MB/s\t%g MB/s\t",
+		(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, args[0].blk_size, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw);
+	for(i = 0; i< n_thread; i++){
+		printf("%g usec\t%g usec\t%g usec\t", args[i].avg_rlat_usec, args[i].rlat_min_usec, args[i].rlat_max_usec);
+	}
+	printf("\n");
 
 
 }
@@ -176,7 +199,7 @@ void *run_aio(void *__arg){
 		cb[i].aio_nbytes = blk_size;
 	}
 
-	printf("tid[%d] device: %s device_size: %ld blk_size: %d blk_cnt: %d r_ratio: %d\n", arg->id, arg->device, device_size, arg->blk_size, arg->blk_cnt, arg->r_ratio);
+	printf("tid[%d] device w/ aio: %s device_size: %ld blk_size: %d blk_cnt: %d r_ratio: %d\n", arg->id, arg->device, device_size, arg->blk_size, arg->blk_cnt, arg->r_ratio);
 
 
 	while(running){
@@ -281,7 +304,7 @@ void *run(void *__arg){
 	printf("tid[%d] device: %s device_size: %ld blk_size: %d blk_cnt: %d r_ratio: %d\n", arg->id, arg->device, device_size, arg->blk_size, arg->blk_cnt, arg->r_ratio);
 
 	while(running){
-		if(running < (tid + 1)) continue;
+		if(running < (tid + 2)) continue;
 		if(sequential){
 			if(lseek(fd, 0, SEEK_CUR) + blk_size > device_size)
 				if(lseek(fd, 0, SEEK_SET)){
@@ -296,12 +319,20 @@ void *run(void *__arg){
 		}
 
 		if(lrand48() % 100 < r_ratio){
+			uint64_t ticks;
+			double lat_usec;
+			ticks = getticks();
 			ret = read(fd, buf, blk_size);
 			if(ret != blk_size){
 				perror("read failed\n");
 				fprintf(stderr, "fd: %d ret: %d\n", fd, ret);
 				goto err2;
 			}
+			lat_usec = (getticks() - ticks) * ns_per_tick / 1000;
+			arg->rlat_usec += lat_usec;
+			if(arg->rlat_max_usec < lat_usec) arg->rlat_max_usec = lat_usec;
+			if(arg->rlat_min_usec > lat_usec) arg->rlat_min_usec = lat_usec;
+			ADD_TO_DIST(lat_usec);
 			arg->rcnt++;
 		} else {
 			ret = write(fd, buf, blk_size);
@@ -323,7 +354,7 @@ err:
 }
 
 int main(int argc, char *argv[]){
-	int opt, i, aio = 0;
+	int opt, i, aio = 0, n_init_running_thread = 0;
 	struct sigevent sev;
 	timer_t timerid;
 	struct itimerspec its;
@@ -331,8 +362,11 @@ int main(int argc, char *argv[]){
 	int blk_size = 0;
 	struct thread_args *args;
 
-	while((opt = getopt(argc, argv, "b:r:s:d:B:t:a:")) != -1){
+	while((opt = getopt(argc, argv, "b:r:s:d:B:t:a:T:l:")) != -1){
 		switch(opt){
+			case 'l':
+				lfname = strdup(optarg);
+				break;
 			case 'a':
 				aio = atoi(optarg);
 				break;
@@ -354,12 +388,20 @@ int main(int argc, char *argv[]){
 			case 't':
 				n_thread = atoi(optarg);
 				break;
+			case 'T':
+				n_init_running_thread = atoi(optarg);
+				break;
 		}
 	}
 
 	if(fname == NULL || r_ratio < 0 || r_ratio > 100 || n_thread == 0){
 		fprintf(stderr, "usage: %s [-B devicesize(bytes)] [-b blocksize(K)] [-r read ratio] [-s 0:random/1:seq] [-d device file] [-t n_thread]\n", argv[0]);
 		return -1;
+	}
+
+	if(lfname != NULL){
+		lfp = fopen(lfname, "w");
+		rlat_dist = (int*)malloc(sizeof(int) * RLAT_DIST_SIZE);
 	}
 
 	printf("Establishing a SIGINT/SIGTERM handler\n");
@@ -411,6 +453,9 @@ int main(int argc, char *argv[]){
 		args[i].blk_cnt = device_size / blk_size;
 		args[i].r_ratio = r_ratio;
 		args[i].iodepth = aio;
+		args[i].rlat_usec = 0;
+		args[i].rlat_max_usec = 0;
+		args[i].rlat_min_usec = 0xFFFFFFFF;
 	}
 
 	ns_per_tick = time_per_tick(1000, 100);
@@ -421,7 +466,8 @@ int main(int argc, char *argv[]){
 		goto err;
 	}
 
-	running = n_thread;
+	if(n_init_running_thread > n_thread) n_init_running_thread = n_thread;
+	running = (n_init_running_thread > 0 ? n_init_running_thread : n_thread)  + 1;
 
 	for(i = 0; i< n_thread; i++){
 		if(aio > 0){
@@ -441,7 +487,19 @@ int main(int argc, char *argv[]){
 		pthread_join(tid[i], NULL);
 	}
 
+	if(rlat_dist){
+		int max_idx = 0;
+		for(i = 0; i< RLAT_DIST_SIZE; i++){
+			if(rlat_dist[i] != 0) max_idx = i;
+		}
+		for(i = 0; i<=max_idx; i++)
+			fprintf(lfp, "%d\n", rlat_dist[i]);
+	}
+
 err:
+	if(lfname) free(lfname);
+	if(lfp) fclose(lfp);
+	if(rlat_dist) free(rlat_dist);
 	free(fname);
 	return 0;
 }

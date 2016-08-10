@@ -1,5 +1,10 @@
 #!/bin/bash
 
+PID=$(ps -ef | grep "/dev/dm-0" | grep iogen | grep leeyo | grep -v root | awk '{print $2}')
+echo $PID
+
+exit 0
+
 AIO=
 THREAD=4
 RRATIO=100

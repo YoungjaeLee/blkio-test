@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-VG=leeyo
+VG=SPYRE
 CGROUP_PREFIX=blkio_test_
 CGROUPV2_DIR=/root/cgroupv2
 META_DIR=.meta
@@ -11,7 +11,7 @@ MAX_WEIGHT=1000
 MIN_WEIGHT=100
 
 IDX=1
-LV_SIZE=10g
+LV_SIZE=50g
 OUTPUT_DIR=results/default
 SEQ=0 # 0:random 1:sequential
 RRATIO=100 # percentage
@@ -32,6 +32,7 @@ create_lv(){
 		LVM_DEV_PATH=$(readlink -f /dev/$VG/$LV)
 		IFS='\/' read -ra VAL <<< "$LVM_DEV_PATH"
 		LVDEV=$(cat /sys/block/${VAL[2]}/dev)
+		#MAX_SECTORS_KB=/sys/block/${VAL[2]}/queue/max_sectors_kb
 		echo "logical volume ($VG/$LV) created."
 		return 0
 	else
@@ -56,8 +57,10 @@ create_cgroup_add_pid(){
 	if [ $CGROUP_VER = 2 ]
 	then
 		mkdir $CGROUPV2_DIR/$CGROUP_NAME
+		#mkdir $CGROUPV2_DIR/spyre/blkio_test_S0
 		echo "$CGROUP_NAME for io created."
 		echo "$1" > $CGROUPV2_DIR/$CGROUP_NAME/cgroup.procs
+		#echo "$1" > $CGROUPV2_DIR/spyre/blkio_test_S0/cgroup.procs
 		echo "pid[$1] moved to $CGROUP_NAME"
 	else
 		cgm create blkio $CGROUP_NAME
@@ -94,8 +97,11 @@ delete_cgroup(){
 }
 
 
-while getopts ":i:C:B:I:b:a:r:s:L:o:t:" opt; do
+while getopts ":i:C:B:I:b:a:r:s:L:o:t:T:" opt; do
 	case $opt in
+		T)
+			INIT_R_THREAD=$OPTARG
+			;;
 		t)
 			THREAD=$OPTARG
 			;;
@@ -164,6 +170,8 @@ else
 	MIN_WEIGHT=100
 fi
 
+create_lv $IDX $LV_SIZE
+
 if [ $CLASS = "D" ]
 then
 	WEIGHT=1000
@@ -172,25 +180,43 @@ then
 	WEIGHT=$MAX_WEIGHT
 	if [ $CGROUP_VER = 2 ]
 	then
-		CGROUP_NAME="$CGROUP_NAME"
+		CGROUP_NAME="/spyre/$CGROUP_NAME"
 	fi
 elif [ $CLASS = "B" ]
 then
 	WEIGHT=$MIN_WEIGHT
 	if [ $CGROUP_VER = 2 ]
 	then
-		CGROUP_NAME="BE/$CGROUP_NAME"
+		CGROUP_NAME="/spyre/$CGROUP_NAME"
 	fi
+	#echo 64 > $MAX_SECTORS_KB
 fi
 
-create_lv $IDX $LV_SIZE
 __DEVSIZE=$(blockdev --getsize $LVM_DEV_PATH)
 DEV_PATH=$LVM_DEV_PATH
 DEVSIZE=$(($__DEVSIZE * 512))
 
+#<<'COMMENT'
+if [ $CLASS = "S" ]
+then
+	#ionice -c 2 -n 0 -p $PID
+	IONICE="ionice -c 2 -n 0"
+elif [ $CLASS = "B" ]
+then
+	#ionice -c 2 -n 7 -p $PID
+	IONICE="ionice -c 3"
+fi
+#COMMENT
+
+
+
 set -x
-./iogen -B $DEVSIZE -b $BLK_SIZE -r $RRATIO -s $SEQ -d $DEV_PATH -t $THREAD $AIO > $OUTPUT_DIR/$IDX.out &
+#chown leeyo:leeyo $DEV_PATH
+#sudo -u leeyo ./iogen -B $DEVSIZE -b $BLK_SIZE -r $RRATIO -s $SEQ -d $DEV_PATH -t $THREAD -T $INIT_R_THREAD $AIO > $OUTPUT_DIR/$IDX.out &
+$IONICE ./iogen -B $DEVSIZE -b $BLK_SIZE -r $RRATIO -s $SEQ -d $DEV_PATH -t $THREAD -T $INIT_R_THREAD $AIO -l $OUTPUT_DIR/${IDX}_rlat_dist > $OUTPUT_DIR/$IDX.out &
+#./iogen -B $DEVSIZE -b $BLK_SIZE -r $RRATIO -s $SEQ -d $DEV_PATH -t $THREAD -T $INIT_R_THREAD $AIO -l $OUTPUT_DIR/${IDX}_rlat_dist > $OUTPUT_DIR/$IDX.out &
 set +x
+#PID=$(ps -ef | grep "$DEV_PATH" | grep iogen | grep leeyo | grep -v root | awk '{print $2}')
 PID=$!
 create_cgroup_add_pid $PID
 
