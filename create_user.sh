@@ -1,11 +1,12 @@
 #!/bin/bash
 
 
-VG=SPYRE
+#VG=SPYRE
+VG=leeyo
 CGROUP_PREFIX=blkio_test_
 CGROUPV2_DIR=/root/cgroupv2
 META_DIR=.meta
-BDEV=/dev/sdb
+BDEV=/dev/sdl
 THREAD=1
 MAX_WEIGHT=1000
 MIN_WEIGHT=100
@@ -21,7 +22,8 @@ MAX_BW=400
 MAX_IOPS=50000
 BLK_SIZE=4 # KB
 
-PVDEV=$(cat /sys/block/sdb/dev)
+#PVDEV=$(cat /sys/block/sdl/dev)
+PVDEV=$(cat /sys/block/dm-10/dev)
 
 create_lv(){
 	LV=$VG$1

@@ -125,9 +125,9 @@ static void timer_handler(union sigval arg){
 		//(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, args[0].blk_size, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw, rlat, args[0].rlat_min_usec, args[0].rlat_max_usec);
 	printf("[%lu]\t %d bytes %g ops\t%g ops\t%g MB/s\t%g MB/s\t%g ops\t%g ops\t%g MB/s\t%g MB/s\t",
 		(unsigned long)(elapsed_ns * 1e-9) + start_tp.tv_sec, args[0].blk_size, total_riops, total_wiops, total_rbw, total_wbw, riops, wiops, rbw, wbw);
-	for(i = 0; i< n_thread; i++){
-		printf("%g usec\t%g usec\t%g usec\t", args[i].avg_rlat_usec, args[i].rlat_min_usec, args[i].rlat_max_usec);
-	}
+	//for(i = 0; i< n_thread; i++){
+		//printf("%g usec\t%g usec\t%g usec\t", args[i].avg_rlat_usec, args[i].rlat_min_usec, args[i].rlat_max_usec);
+	//}
 	printf("\n");
 
 

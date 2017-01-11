@@ -6,7 +6,7 @@ LOOP_DEV_PATH=
 
 VG=leeyo
 LV=
-LV_SIZE=128g
+LV_SIZE=32g
 
 DEV=
 CGROUP_PREFIX=blkio_test_
@@ -15,7 +15,7 @@ IDX=1
 BLKSIZE=4 # KB
 RRATIO=100 # percentage
 THREAD=4
-SEQ=1 # 0:random 1:sequential
+SEQ=0 # 0:random 1:sequential
 META_DIR=.meta
 
 create_lv(){

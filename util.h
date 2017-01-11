@@ -1,6 +1,7 @@
 #ifndef _UTIL_H
 #define _UTIL_H
 
+#if defined( __powerpc__)
 static __inline__ uint64_t getticks(void)
 {
      unsigned int x, x0, x1;
@@ -12,6 +13,7 @@ static __inline__ uint64_t getticks(void)
 
      return (((uint64_t)x0) << 32) | x;
 }
+#endif
 
 static __inline__ double elapsed(uint64_t t1, uint64_t t0)			
 {									
